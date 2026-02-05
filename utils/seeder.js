@@ -2,13 +2,12 @@ const mongoose = require("mongoose");
 const dotenv = require("dotenv");
 const bcrypt = require("bcryptjs");
 
-const User = require("../models/User");
-const Branch = require("../models/Branch");
+const User = require("../models/User"); // ✅ missing tha
 const Student = require("../models/Student");
 const Teacher = require("../models/Teacher");
+const Branch = require("../models/Branch");
 
 dotenv.config();
-
 mongoose.connect(process.env.MONGO_URI);
 
 const seedData = async () => {
@@ -69,15 +68,15 @@ const seedData = async () => {
 
     // Create teacher users
     const teacher1User = await User.create({
-      name: "Dr. John Smith",
-      email: "john.smith@college.edu",
+      name: "Kishan Rangeele",
+      email: "Kishanr@gmail.com",
       password: "teacher123",
       role: "teacher",
     });
 
     const teacher2User = await User.create({
-      name: "Prof. Sarah Johnson",
-      email: "sarah.johnson@college.edu",
+      name: "Nikita K",
+      email: "NikitaK@gmail.com",
       password: "teacher123",
       role: "teacher",
     });
