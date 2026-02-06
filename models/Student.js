@@ -22,10 +22,6 @@ const studentSchema = new mongoose.Schema({
     min: 1,
     max: 8,
   },
-  section: {
-    type: String,
-    default: "A",
-  },
   qrCode: {
     type: String,
   },
