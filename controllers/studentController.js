@@ -1,18 +1,26 @@
-// sanity-change
-
+// ======== MODELS ========
+// Student academic profile
 const Student = require("../models/Student");
+
+// Lecture session (QR generate entity)
 const Lecture = require("../models/Lecture");
+
+// Attendance record (QR scan output)
 const Attendance = require("../models/Attendance");
+
+// ==================== STUDENT PROFILE ====================
 
 // @desc    Get student profile
 // @route   GET /api/student/profile
 // @access  Private/Student
 exports.getProfile = async (req, res) => {
   try {
+    // Logged-in user ke basis pe student profile nikalna
     const student = await Student.findOne({ user: req.user._id })
-      .populate("user", "name email")
-      .populate("branch");
+      .populate("user", "name email") // basic user info
+      .populate("branch"); // branch details
 
+    // Agar profile hi nahi mili
     if (!student) {
       return res.status(404).json({
         success: false,
@@ -20,11 +28,14 @@ exports.getProfile = async (req, res) => {
       });
     }
 
+    // Success response
     res.json({ success: true, data: student });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// ==================== SCAN QR & MARK ATTENDANCE ====================
 
 // @desc    Scan QR and mark attendance
 // @route   POST /api/student/scan-attendance
@@ -33,9 +44,10 @@ exports.scanAttendance = async (req, res) => {
   try {
     const { qrData, location, deviceInfo } = req.body;
 
-    // Parse QR data
+    // ======== QR DATA PARSING ========
     let parsedData;
     try {
+      // QR ke andar JSON hota hai
       parsedData = JSON.parse(qrData);
     } catch (e) {
       return res.status(400).json({
@@ -46,7 +58,7 @@ exports.scanAttendance = async (req, res) => {
 
     const { lectureCode, expiresAt } = parsedData;
 
-    // Check if QR is expired
+    // ======== QR EXPIRY CHECK ========
     if (new Date(expiresAt) < new Date()) {
       return res.status(400).json({
         success: false,
@@ -54,10 +66,10 @@ exports.scanAttendance = async (req, res) => {
       });
     }
 
-    // Find the lecture
+    // ======== LECTURE FETCH ========
     const lecture = await Lecture.findOne({
-      qrCodeData: lectureCode,
-      isActive: true,
+      qrCodeData: lectureCode, // QR unique identifier
+      isActive: true, // lecture still valid
     }).populate("branch");
 
     if (!lecture) {
@@ -67,7 +79,7 @@ exports.scanAttendance = async (req, res) => {
       });
     }
 
-    // Get student profile
+    // ======== STUDENT FETCH ========
     const student = await Student.findOne({ user: req.user._id });
 
     if (!student) {
@@ -77,7 +89,8 @@ exports.scanAttendance = async (req, res) => {
       });
     }
 
-    // Verify student belongs to the correct branch/semester/section
+    // ======== AUTHORIZATION CHECKS ========
+    // Branch mismatch
     if (student.branch.toString() !== lecture.branch._id.toString()) {
       return res.status(403).json({
         success: false,
@@ -85,6 +98,7 @@ exports.scanAttendance = async (req, res) => {
       });
     }
 
+    // Semester mismatch
     if (student.semester !== lecture.semester) {
       return res.status(403).json({
         success: false,
@@ -92,6 +106,7 @@ exports.scanAttendance = async (req, res) => {
       });
     }
 
+    // Section mismatch
     if (student.section !== lecture.section) {
       return res.status(403).json({
         success: false,
@@ -99,7 +114,7 @@ exports.scanAttendance = async (req, res) => {
       });
     }
 
-    // Check if already marked
+    // ======== DUPLICATE ATTENDANCE CHECK ========
     const existingAttendance = await Attendance.findOne({
       lecture: lecture._id,
       student: student._id,
@@ -113,25 +128,28 @@ exports.scanAttendance = async (req, res) => {
       });
     }
 
-    // Determine if late
+    // ======== LATE / PRESENT LOGIC ========
     const now = new Date();
+
+    // Lecture start time set karna
     const lectureDate = new Date(lecture.date);
     const [startHour, startMin] = lecture.startTime.split(":").map(Number);
     lectureDate.setHours(startHour, startMin, 0, 0);
 
-    // If more than 15 minutes late, mark as late
-    const lateThreshold = 15 * 60 * 1000; // 15 minutes in ms
+    // 15 minute ka late threshold
+    const lateThreshold = 15 * 60 * 1000;
     const status = now - lectureDate > lateThreshold ? "late" : "present";
 
-    // Create attendance record
+    // ======== ATTENDANCE CREATE ========
     const attendance = await Attendance.create({
       lecture: lecture._id,
       student: student._id,
       status,
-      location,
-      deviceInfo,
+      location, // geo data (anti-proxy logic)
+      deviceInfo, // device fingerprint
     });
 
+    // Final response
     res.status(201).json({
       success: true,
       data: {
@@ -150,6 +168,8 @@ exports.scanAttendance = async (req, res) => {
   }
 };
 
+// ==================== ATTENDANCE HISTORY ====================
+
 // @desc    Get student's attendance history
 // @route   GET /api/student/attendance
 // @access  Private/Student
@@ -157,6 +177,7 @@ exports.getAttendanceHistory = async (req, res) => {
   try {
     const { subject, startDate, endDate, page = 1, limit = 20 } = req.query;
 
+    // Student identity
     const student = await Student.findOne({ user: req.user._id });
 
     if (!student) {
@@ -166,8 +187,10 @@ exports.getAttendanceHistory = async (req, res) => {
       });
     }
 
+    // Base query (sirf apna data)
     let query = { student: student._id };
 
+    // Attendance records fetch
     const attendanceRecords = await Attendance.find(query)
       .populate({
         path: "lecture",
@@ -180,7 +203,7 @@ exports.getAttendanceHistory = async (req, res) => {
       .skip((page - 1) * limit)
       .limit(parseInt(limit));
 
-    // Filter by subject if provided
+    // Subject filter (client-side)
     let filteredRecords = attendanceRecords;
     if (subject) {
       filteredRecords = attendanceRecords.filter(
@@ -188,7 +211,7 @@ exports.getAttendanceHistory = async (req, res) => {
       );
     }
 
-    // Filter by date range
+    // Date range filter
     if (startDate && endDate) {
       filteredRecords = filteredRecords.filter((a) => {
         const date = new Date(a.markedAt);
@@ -213,11 +236,14 @@ exports.getAttendanceHistory = async (req, res) => {
   }
 };
 
+// ==================== ATTENDANCE SUMMARY ====================
+
 // @desc    Get attendance summary by subject
 // @route   GET /api/student/attendance/summary
 // @access  Private/Student
 exports.getAttendanceSummary = async (req, res) => {
   try {
+    // Student + branch info
     const student = await Student.findOne({ user: req.user._id }).populate(
       "branch",
     );
@@ -229,21 +255,22 @@ exports.getAttendanceSummary = async (req, res) => {
       });
     }
 
-    // Get all lectures for student's branch/semester/section
+    // Student ke saare lectures
     const allLectures = await Lecture.find({
       branch: student.branch._id,
       semester: student.semester,
       section: student.section,
     });
 
-    // Get student's attendance
+    // Student ke attendance records
     const attendanceRecords = await Attendance.find({
       student: student._id,
     });
 
-    // Group by subject
+    // ======== SUBJECT-WISE SUMMARY ========
     const subjectSummary = {};
 
+    // Total lectures count
     allLectures.forEach((lecture) => {
       const subjectCode = lecture.subject.code;
       if (!subjectSummary[subjectCode]) {
@@ -260,23 +287,22 @@ exports.getAttendanceSummary = async (req, res) => {
       subjectSummary[subjectCode].totalLectures++;
     });
 
+    // Present / late count
     attendanceRecords.forEach((record) => {
       const lecture = allLectures.find(
         (l) => l._id.toString() === record.lecture.toString(),
       );
       if (lecture) {
         const subjectCode = lecture.subject.code;
-        if (subjectSummary[subjectCode]) {
-          if (record.status === "present") {
-            subjectSummary[subjectCode].present++;
-          } else if (record.status === "late") {
-            subjectSummary[subjectCode].late++;
-          }
+        if (record.status === "present") {
+          subjectSummary[subjectCode].present++;
+        } else if (record.status === "late") {
+          subjectSummary[subjectCode].late++;
         }
       }
     });
 
-    // Calculate percentages and absent
+    // Absent + percentage calculate
     Object.keys(subjectSummary).forEach((key) => {
       const summary = subjectSummary[key];
       summary.absent = summary.totalLectures - summary.present - summary.late;
@@ -288,7 +314,7 @@ exports.getAttendanceSummary = async (req, res) => {
           : 0;
     });
 
-    // Overall summary
+    // ======== OVERALL SUMMARY ========
     const overall = {
       totalLectures: allLectures.length,
       present: attendanceRecords.filter((a) => a.status === "present").length,
@@ -296,7 +322,9 @@ exports.getAttendanceSummary = async (req, res) => {
       absent: 0,
       percentage: 0,
     };
+
     overall.absent = overall.totalLectures - overall.present - overall.late;
+
     overall.percentage =
       overall.totalLectures > 0
         ? Math.round(
@@ -322,6 +350,8 @@ exports.getAttendanceSummary = async (req, res) => {
   }
 };
 
+// ==================== STUDENT DASHBOARD ====================
+
 // @desc    Get student dashboard
 // @route   GET /api/student/dashboard
 // @access  Private/Student
@@ -338,7 +368,7 @@ exports.getDashboard = async (req, res) => {
       });
     }
 
-    // Get recent attendance
+    // Recent attendance (last 5 scans)
     const recentAttendance = await Attendance.find({ student: student._id })
       .populate({
         path: "lecture",
@@ -350,9 +380,10 @@ exports.getDashboard = async (req, res) => {
       .sort({ markedAt: -1 })
       .limit(5);
 
-    // Get today's lectures for student's class
+    // Aaj ke lectures
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
@@ -366,9 +397,9 @@ exports.getDashboard = async (req, res) => {
       populate: { path: "user", select: "name" },
     });
 
-    // Check which today's lectures student has attended
+    // Aaj ke lectures me attendance status
     const attendedLectureIds = recentAttendance
-      .filter((a) => a.lecture && new Date(a.markedAt) >= today)
+      .filter((a) => new Date(a.markedAt) >= today)
       .map((a) => a.lecture._id.toString());
 
     const todayLecturesWithStatus = todayLectures.map((lecture) => ({
@@ -376,7 +407,7 @@ exports.getDashboard = async (req, res) => {
       attended: attendedLectureIds.includes(lecture._id.toString()),
     }));
 
-    // Overall attendance stats
+    // Overall stats
     const totalLectures = await Lecture.countDocuments({
       branch: student.branch._id,
       semester: student.semester,
