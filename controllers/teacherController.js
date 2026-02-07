@@ -1,19 +1,36 @@
+// ======== MODELS ========
+// Teacher profile (subjects, branches, identity)
 const Teacher = require("../models/Teacher");
+
+// Student academic data
 const Student = require("../models/Student");
+
+// Lecture session (QR + timing)
 const Lecture = require("../models/Lecture");
+
+// Attendance records
 const Attendance = require("../models/Attendance");
+
+// Branch master (mostly populate ke liye)
 const Branch = require("../models/Branch");
+
+// QR code generator library
 const QRCode = require("qrcode");
+
+// Crypto library (secure random lecture codes)
 const crypto = require("crypto");
+
+// ==================== TEACHER PROFILE ====================
 
 // @desc    Get teacher profile
 // @route   GET /api/teacher/profile
 // @access  Private/Teacher
 exports.getProfile = async (req, res) => {
   try {
+    // Logged-in user ke basis pe teacher profile
     const teacher = await Teacher.findOne({ user: req.user._id })
-      .populate("user", "name email")
-      .populate("branches");
+      .populate("user", "name email") // basic identity
+      .populate("branches"); // assigned branches
 
     if (!teacher) {
       return res.status(404).json({
@@ -27,6 +44,8 @@ exports.getProfile = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// ==================== GENERATE LECTURE QR ====================
 
 // @desc    Generate QR code for lecture
 // @route   POST /api/teacher/lectures/generate-qr
@@ -44,6 +63,7 @@ exports.generateLectureQR = async (req, res) => {
       validMinutes,
     } = req.body;
 
+    // Teacher identity verify
     const teacher = await Teacher.findOne({ user: req.user._id });
     if (!teacher) {
       return res.status(404).json({
@@ -52,14 +72,16 @@ exports.generateLectureQR = async (req, res) => {
       });
     }
 
-    // Generate unique lecture code
+    // ======== UNIQUE LECTURE CODE ========
+    // Random, unpredictable → cheating-resistant
     const lectureCode = crypto.randomBytes(16).toString("hex");
 
-    // Calculate expiration time
+    // ======== QR EXPIRY TIME ========
     const expiresAt = new Date();
     expiresAt.setMinutes(expiresAt.getMinutes() + (validMinutes || 60));
 
-    // QR Code data
+    // ======== QR PAYLOAD ========
+    // Student side isi data ko parse karega
     const qrData = JSON.stringify({
       lectureCode,
       teacherId: teacher._id,
@@ -71,7 +93,7 @@ exports.generateLectureQR = async (req, res) => {
       expiresAt: expiresAt.toISOString(),
     });
 
-    // Generate QR Code as base64
+    // ======== QR IMAGE GENERATION ========
     const qrCodeImage = await QRCode.toDataURL(qrData, {
       width: 300,
       margin: 2,
@@ -81,7 +103,7 @@ exports.generateLectureQR = async (req, res) => {
       },
     });
 
-    // Create lecture record
+    // ======== LECTURE RECORD CREATE ========
     const lecture = await Lecture.create({
       teacher: teacher._id,
       branch: branchId,
@@ -90,8 +112,8 @@ exports.generateLectureQR = async (req, res) => {
       section: section || "A",
       startTime,
       endTime,
-      qrCode: qrCodeImage,
-      qrCodeData: lectureCode,
+      qrCode: qrCodeImage, // display QR
+      qrCodeData: lectureCode, // verification key
       expiresAt,
       date: new Date(),
     });
@@ -111,6 +133,8 @@ exports.generateLectureQR = async (req, res) => {
   }
 };
 
+// ==================== GET TEACHER LECTURES ====================
+
 // @desc    Get teacher's lectures
 // @route   GET /api/teacher/lectures
 // @access  Private/Teacher
@@ -118,6 +142,7 @@ exports.getLectures = async (req, res) => {
   try {
     const { date, branch, subject, page = 1, limit = 10 } = req.query;
 
+    // Teacher identity
     const teacher = await Teacher.findOne({ user: req.user._id });
     if (!teacher) {
       return res.status(404).json({
@@ -126,8 +151,10 @@ exports.getLectures = async (req, res) => {
       });
     }
 
+    // Base query (sirf apne lectures)
     let query = { teacher: teacher._id };
 
+    // Date filter (single day)
     if (date) {
       const startOfDay = new Date(date);
       startOfDay.setHours(0, 0, 0, 0);
@@ -139,6 +166,7 @@ exports.getLectures = async (req, res) => {
     if (branch) query.branch = branch;
     if (subject) query["subject.code"] = subject;
 
+    // Lectures fetch
     const lectures = await Lecture.find(query)
       .populate("branch")
       .sort({ date: -1, startTime: -1 })
@@ -147,18 +175,20 @@ exports.getLectures = async (req, res) => {
 
     const total = await Lecture.countDocuments(query);
 
-    // Get attendance count for each lecture
+    // ======== ATTENDANCE COUNTS ========
     const lecturesWithAttendance = await Promise.all(
       lectures.map(async (lecture) => {
         const attendanceCount = await Attendance.countDocuments({
           lecture: lecture._id,
           status: "present",
         });
+
         const totalStudents = await Student.countDocuments({
           branch: lecture.branch._id,
           semester: lecture.semester,
           section: lecture.section,
         });
+
         return {
           ...lecture.toObject(),
           attendanceCount,
@@ -182,6 +212,8 @@ exports.getLectures = async (req, res) => {
   }
 };
 
+// ==================== LECTURE ATTENDANCE DETAILS ====================
+
 // @desc    Get lecture attendance details
 // @route   GET /api/teacher/lectures/:lectureId/attendance
 // @access  Private/Teacher
@@ -198,14 +230,14 @@ exports.getLectureAttendance = async (req, res) => {
       });
     }
 
-    // Get all students for this branch/semester/section
+    // Class ke saare students
     const allStudents = await Student.find({
       branch: lecture.branch._id,
       semester: lecture.semester,
       section: lecture.section,
     }).populate("user", "name email");
 
-    // Get attendance records
+    // Lecture ke attendance records
     const attendanceRecords = await Attendance.find({
       lecture: lecture._id,
     }).populate({
@@ -213,13 +245,9 @@ exports.getLectureAttendance = async (req, res) => {
       populate: { path: "user", select: "name email" },
     });
 
-    const presentStudentIds = attendanceRecords.map((a) =>
-      a.student._id.toString(),
-    );
-
-    // Build attendance list
+    // Final attendance list (present + absent)
     const attendanceList = allStudents.map((student) => {
-      const attendanceRecord = attendanceRecords.find(
+      const record = attendanceRecords.find(
         (a) => a.student._id.toString() === student._id.toString(),
       );
 
@@ -230,12 +258,12 @@ exports.getLectureAttendance = async (req, res) => {
           name: student.user.name,
           email: student.user.email,
         },
-        status: attendanceRecord ? attendanceRecord.status : "absent",
-        markedAt: attendanceRecord ? attendanceRecord.markedAt : null,
+        status: record ? record.status : "absent",
+        markedAt: record ? record.markedAt : null,
       };
     });
 
-    // Sort by roll number
+    // Roll number wise sorting
     attendanceList.sort((a, b) =>
       a.student.rollNumber.localeCompare(b.student.rollNumber),
     );
@@ -259,9 +287,9 @@ exports.getLectureAttendance = async (req, res) => {
   }
 };
 
+// ==================== MANUAL ATTENDANCE UPDATE ====================
+
 // @desc    Update attendance manually
-// @route   PUT /api/teacher/attendance/:attendanceId
-// @access  Private/Teacher
 exports.updateAttendance = async (req, res) => {
   try {
     const { status } = req.body;
@@ -292,9 +320,9 @@ exports.updateAttendance = async (req, res) => {
   }
 };
 
+// ==================== MANUAL MARK ATTENDANCE ====================
+
 // @desc    Mark attendance manually
-// @route   POST /api/teacher/lectures/:lectureId/mark-attendance
-// @access  Private/Teacher
 exports.markAttendanceManually = async (req, res) => {
   try {
     const { studentId, status } = req.body;
@@ -307,7 +335,7 @@ exports.markAttendanceManually = async (req, res) => {
       });
     }
 
-    // Check if attendance already exists
+    // Existing attendance check
     let attendance = await Attendance.findOne({
       lecture: lecture._id,
       student: studentId,
@@ -334,9 +362,8 @@ exports.markAttendanceManually = async (req, res) => {
   }
 };
 
-// @desc    Delete attendance
-// @route   DELETE /api/teacher/attendance/:attendanceId
-// @access  Private/Teacher
+// ==================== DELETE ATTENDANCE ====================
+
 exports.deleteAttendance = async (req, res) => {
   try {
     const attendance = await Attendance.findByIdAndDelete(
@@ -359,9 +386,8 @@ exports.deleteAttendance = async (req, res) => {
   }
 };
 
-// @desc    Get assigned branches and subjects
-// @route   GET /api/teacher/assigned
-// @access  Private/Teacher
+// ==================== ASSIGNED BRANCHES & SUBJECTS ====================
+
 exports.getAssignedBranchesSubjects = async (req, res) => {
   try {
     const teacher = await Teacher.findOne({ user: req.user._id }).populate(
@@ -387,9 +413,8 @@ exports.getAssignedBranchesSubjects = async (req, res) => {
   }
 };
 
-// @desc    Get teacher dashboard stats
-// @route   GET /api/teacher/dashboard
-// @access  Private/Teacher
+// ==================== TEACHER DASHBOARD ====================
+
 exports.getDashboardStats = async (req, res) => {
   try {
     const teacher = await Teacher.findOne({ user: req.user._id });
@@ -404,6 +429,7 @@ exports.getDashboardStats = async (req, res) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
+    // Aaj ke lectures
     const todayLectures = await Lecture.find({
       teacher: teacher._id,
       date: { $gte: today },
@@ -413,7 +439,7 @@ exports.getDashboardStats = async (req, res) => {
       teacher: teacher._id,
     });
 
-    // Get active lecture (if any)
+    // Currently active QR lecture
     const now = new Date();
     const activeLecture = await Lecture.findOne({
       teacher: teacher._id,
@@ -421,7 +447,7 @@ exports.getDashboardStats = async (req, res) => {
       expiresAt: { $gt: now },
     }).populate("branch");
 
-    // Recent attendance
+    // Recent attendance activity
     const recentAttendance = await Attendance.find()
       .populate({
         path: "lecture",
