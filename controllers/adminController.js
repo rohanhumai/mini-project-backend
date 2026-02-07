@@ -1,21 +1,38 @@
+// ======== MODELS IMPORT ========
+// Base login entity (admin / teacher / student)
 const User = require("../models/User");
+
+// Student academic profile
 const Student = require("../models/Student");
+
+// Teacher academic + subject mapping
 const Teacher = require("../models/Teacher");
+
+// Branch + subject master
 const Branch = require("../models/Branch");
+
+// Attendance records (QR scan output)
 const Attendance = require("../models/Attendance");
+
+// Lecture sessions (QR generate entity)
 const Lecture = require("../models/Lecture");
 
 // ==================== USER MANAGEMENT ====================
 
-// @desc    Get all users
+// @desc    Get all users (admin view with filters)
 // @route   GET /api/admin/users
 // @access  Private/Admin
 exports.getAllUsers = async (req, res) => {
   try {
+    // Query params: role filter, pagination, search
     const { role, page = 1, limit = 10, search } = req.query;
 
     let query = {};
+
+    // Role-based filtering (admin / teacher / student)
     if (role) query.role = role;
+
+    // Search by name OR email (case-insensitive)
     if (search) {
       query.$or = [
         { name: { $regex: search, $options: "i" } },
@@ -23,13 +40,16 @@ exports.getAllUsers = async (req, res) => {
       ];
     }
 
+    // Fetch paginated users
     const users = await User.find(query)
-      .skip((page - 1) * limit)
-      .limit(parseInt(limit))
-      .sort({ createdAt: -1 });
+      .skip((page - 1) * limit) // pagination offset
+      .limit(parseInt(limit)) // page size
+      .sort({ createdAt: -1 }); // latest users first
 
+    // Total count for pagination UI
     const total = await User.countDocuments(query);
 
+    // Response with pagination meta
     res.json({
       success: true,
       data: users,
@@ -45,14 +65,15 @@ exports.getAllUsers = async (req, res) => {
   }
 };
 
-// @desc    Create user
+// @desc    Create user (admin power)
 // @route   POST /api/admin/users
 // @access  Private/Admin
 exports.createUser = async (req, res) => {
   try {
+    // Common user fields + role-specific fields
     const { name, email, password, role, ...profileData } = req.body;
 
-    // Check if user exists
+    // Prevent duplicate accounts
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({
@@ -61,19 +82,21 @@ exports.createUser = async (req, res) => {
       });
     }
 
-    // Create user
+    // Create base user (login identity)
     const user = await User.create({ name, email, password, role });
 
-    // Create role-specific profile
+    // ======== ROLE-SPECIFIC PROFILE CREATION ========
     if (role === "student") {
+      // Student academic record
       await Student.create({
-        user: user._id,
+        user: user._id, // reference to User
         rollNumber: profileData.rollNumber,
         branch: profileData.branch,
         semester: profileData.semester || 1,
         section: profileData.section || "A",
       });
     } else if (role === "teacher") {
+      // Teacher teaching permissions
       await Teacher.create({
         user: user._id,
         employeeId: profileData.employeeId,
@@ -93,13 +116,14 @@ exports.createUser = async (req, res) => {
   }
 };
 
-// @desc    Update user
+// @desc    Update user & profile
 // @route   PUT /api/admin/users/:id
 // @access  Private/Admin
 exports.updateUser = async (req, res) => {
   try {
     const { name, email, role, isActive, ...profileData } = req.body;
 
+    // Update base user info
     const user = await User.findByIdAndUpdate(
       req.params.id,
       { name, email, role, isActive },
@@ -113,7 +137,7 @@ exports.updateUser = async (req, res) => {
       });
     }
 
-    // Update role-specific profile
+    // Update role-specific profile (or create if missing)
     if (role === "student") {
       await Student.findOneAndUpdate({ user: user._id }, profileData, {
         new: true,
@@ -136,7 +160,7 @@ exports.updateUser = async (req, res) => {
   }
 };
 
-// @desc    Delete user
+// @desc    Delete user completely
 // @route   DELETE /api/admin/users/:id
 // @access  Private/Admin
 exports.deleteUser = async (req, res) => {
@@ -150,9 +174,11 @@ exports.deleteUser = async (req, res) => {
       });
     }
 
-    // Delete associated profiles
+    // Clean up linked profiles
     await Student.findOneAndDelete({ user: user._id });
     await Teacher.findOneAndDelete({ user: user._id });
+
+    // Delete base user
     await user.deleteOne();
 
     res.json({
@@ -167,10 +193,9 @@ exports.deleteUser = async (req, res) => {
 // ==================== BRANCH MANAGEMENT ====================
 
 // @desc    Get all branches
-// @route   GET /api/admin/branches
-// @access  Private/Admin
 exports.getAllBranches = async (req, res) => {
   try {
+    // Sorted by branch code (CS, AIML, etc.)
     const branches = await Branch.find().sort({ code: 1 });
     res.json({ success: true, data: branches });
   } catch (error) {
@@ -178,13 +203,12 @@ exports.getAllBranches = async (req, res) => {
   }
 };
 
-// @desc    Create branch
-// @route   POST /api/admin/branches
-// @access  Private/Admin
+// @desc    Create new branch
 exports.createBranch = async (req, res) => {
   try {
     const { code, name, subjects } = req.body;
 
+    // Prevent duplicate branch codes
     const existingBranch = await Branch.findOne({ code });
     if (existingBranch) {
       return res.status(400).json({
@@ -205,9 +229,7 @@ exports.createBranch = async (req, res) => {
   }
 };
 
-// @desc    Update branch
-// @route   PUT /api/admin/branches/:id
-// @access  Private/Admin
+// @desc    Update branch details
 exports.updateBranch = async (req, res) => {
   try {
     const branch = await Branch.findByIdAndUpdate(req.params.id, req.body, {
@@ -232,9 +254,7 @@ exports.updateBranch = async (req, res) => {
   }
 };
 
-// @desc    Delete branch
-// @route   DELETE /api/admin/branches/:id
-// @access  Private/Admin
+// @desc    Delete branch (only if no students)
 exports.deleteBranch = async (req, res) => {
   try {
     const branch = await Branch.findById(req.params.id);
@@ -246,7 +266,7 @@ exports.deleteBranch = async (req, res) => {
       });
     }
 
-    // Check if students are enrolled
+    // Safety check: students still enrolled?
     const studentsCount = await Student.countDocuments({ branch: branch._id });
     if (studentsCount > 0) {
       return res.status(400).json({
@@ -268,20 +288,20 @@ exports.deleteBranch = async (req, res) => {
 
 // ==================== DASHBOARD STATS ====================
 
-// @desc    Get dashboard statistics
-// @route   GET /api/admin/dashboard
-// @access  Private/Admin
+// @desc    Admin dashboard overview
 exports.getDashboardStats = async (req, res) => {
   try {
+    // Total counts for cards
     const totalStudents = await Student.countDocuments();
     const totalTeachers = await Teacher.countDocuments();
     const totalBranches = await Branch.countDocuments();
     const totalLectures = await Lecture.countDocuments();
 
-    // Today's stats
+    // Start of today (00:00)
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
+    // Today’s lectures & attendance
     const todayLectures = await Lecture.countDocuments({
       date: { $gte: today },
     });
@@ -290,7 +310,7 @@ exports.getDashboardStats = async (req, res) => {
       markedAt: { $gte: today },
     });
 
-    // Branch-wise student distribution
+    // Branch-wise student count (chart data)
     const branchDistribution = await Student.aggregate([
       {
         $lookup: {
@@ -311,7 +331,7 @@ exports.getDashboardStats = async (req, res) => {
       { $sort: { count: -1 } },
     ]);
 
-    // Recent activity
+    // Recent attendance activity feed
     const recentAttendance = await Attendance.find()
       .populate({
         path: "student",
@@ -349,15 +369,16 @@ exports.getDashboardStats = async (req, res) => {
   }
 };
 
-// @desc    Get attendance report
-// @route   GET /api/admin/reports/attendance
-// @access  Private/Admin
+// ==================== ATTENDANCE REPORT ====================
+
+// @desc    Attendance analytics report
 exports.getAttendanceReport = async (req, res) => {
   try {
     const { branch, subject, startDate, endDate, semester } = req.query;
 
     let matchQuery = {};
 
+    // Date range filter
     if (startDate && endDate) {
       matchQuery.markedAt = {
         $gte: new Date(startDate),
@@ -365,8 +386,11 @@ exports.getAttendanceReport = async (req, res) => {
       };
     }
 
+    // Aggregation pipeline for reports
     const report = await Attendance.aggregate([
       { $match: matchQuery },
+
+      // Join lecture info
       {
         $lookup: {
           from: "lectures",
@@ -376,6 +400,8 @@ exports.getAttendanceReport = async (req, res) => {
         },
       },
       { $unwind: "$lectureInfo" },
+
+      // Join student info
       {
         $lookup: {
           from: "students",
@@ -385,6 +411,8 @@ exports.getAttendanceReport = async (req, res) => {
         },
       },
       { $unwind: "$studentInfo" },
+
+      // Join branch info
       {
         $lookup: {
           from: "branches",
@@ -394,18 +422,27 @@ exports.getAttendanceReport = async (req, res) => {
         },
       },
       { $unwind: "$branchInfo" },
+
+      // Group by branch + subject + date
       {
         $group: {
           _id: {
             branch: "$branchInfo.code",
             subject: "$lectureInfo.subject.code",
-            date: { $dateToString: { format: "%Y-%m-%d", date: "$markedAt" } },
+            date: {
+              $dateToString: { format: "%Y-%m-%d", date: "$markedAt" },
+            },
           },
-          present: { $sum: { $cond: [{ $eq: ["$status", "present"] }, 1, 0] } },
-          late: { $sum: { $cond: [{ $eq: ["$status", "late"] }, 1, 0] } },
+          present: {
+            $sum: { $cond: [{ $eq: ["$status", "present"] }, 1, 0] },
+          },
+          late: {
+            $sum: { $cond: [{ $eq: ["$status", "late"] }, 1, 0] },
+          },
           total: { $sum: 1 },
         },
       },
+
       { $sort: { "_id.date": -1 } },
     ]);
 
