@@ -1,18 +1,38 @@
+// MongoDB ODM (Object Data Modeling) library
+// Isse hum MongoDB ko JS objects ke through handle karte hai
 const mongoose = require("mongoose");
+
+// Environment variables (.env file) load karne ke liye
 const dotenv = require("dotenv");
+
+// Password hashing library (future auth ke liye)
+// ⚠️ NOTE: Is file me directly use nahi ho raha, but User model me ho sakta hai
 const bcrypt = require("bcryptjs");
 
-const User = require("../models/User"); // ✅ missing tha
+// ======== MODELS IMPORT ========
+// Base user model (admin / teacher / student sab isse linked honge)
+const User = require("../models/User");
+
+// Student-specific profile model
 const Student = require("../models/Student");
+
+// Teacher-specific profile model
 const Teacher = require("../models/Teacher");
+
+// Branch + subjects ka master data
 const Branch = require("../models/Branch");
 
+// .env file ko activate kar diya
 dotenv.config();
+
+// MongoDB se connection establish
 mongoose.connect(process.env.MONGO_URI);
 
+// ======== MAIN SEED FUNCTION ========
 const seedData = async () => {
   try {
-    // Clear existing data
+    // ======== STEP 1: PURANA DATA CLEAR ========
+    // Taki duplicate entries na bane har baar seed chalane pe
     await User.deleteMany();
     await Branch.deleteMany();
     await Student.deleteMany();
@@ -20,7 +40,8 @@ const seedData = async () => {
 
     console.log("Data cleared...");
 
-    // Create branches
+    // ======== STEP 2: BRANCH + SUBJECT MASTER DATA ========
+    // Attendance system me branch & subject backbone hota hai
     const branches = await Branch.insertMany([
       {
         code: "CS",
@@ -58,15 +79,17 @@ const seedData = async () => {
 
     console.log("Branches created...");
 
-    // Create admin user
+    // ======== STEP 3: ADMIN USER ========
+    // Admin sirf User collection me hota hai (no extra profile)
     const adminUser = await User.create({
       name: "Admin User",
       email: "admin@college.edu",
-      password: "admin123",
+      password: "admin123", // hashing model me hoti hai
       role: "admin",
     });
 
-    // Create teacher users
+    // ======== STEP 4: TEACHER USERS (LOGIN IDENTITIES) ========
+    // Teacher ka login User collection se hota hai
     const teacher1User = await User.create({
       name: "Kishan Rangeele",
       email: "Kishanr@gmail.com",
@@ -81,12 +104,22 @@ const seedData = async () => {
       role: "teacher",
     });
 
-    // Create teacher profiles
+    // ======== STEP 5: TEACHER PROFILES ========
+    // Teacher model me actual teaching info hoti hai
     await Teacher.create({
+      // User collection se reference
       user: teacher1User._id,
+
+      // College ka employee id
       employeeId: "EMP001",
+
+      // Department info
       department: "Computer Science",
+
+      // Teacher kaunse branches padhata hai
       branches: [branches[0]._id, branches[1]._id],
+
+      // Teacher kaunse subject kis branch me padhata hai
       subjects: [
         {
           branch: branches[0]._id,
@@ -127,7 +160,8 @@ const seedData = async () => {
 
     console.log("Teachers created...");
 
-    // Create student users
+    // ======== STEP 6: STUDENT USERS + PROFILES ========
+    // Pehle User (login), fir Student (academic profile)
     const studentData = [
       {
         name: "Alice Brown",
@@ -162,6 +196,7 @@ const seedData = async () => {
     ];
 
     for (const data of studentData) {
+      // Student ka login account
       const user = await User.create({
         name: data.name,
         email: data.email,
@@ -169,8 +204,9 @@ const seedData = async () => {
         role: "student",
       });
 
+      // Student ka academic data
       await Student.create({
-        user: user._id,
+        user: user._id, // User se link
         rollNumber: data.roll,
         branch: branches[data.branch]._id,
         semester: 5,
@@ -179,22 +215,16 @@ const seedData = async () => {
     }
 
     console.log("Students created...");
-    console.log("");
     console.log("=== SEED DATA COMPLETE ===");
-    console.log("");
-    console.log("Login Credentials:");
-    console.log("------------------");
-    console.log("Admin: admin@college.edu / admin123");
-    console.log("Teacher 1: john.smith@college.edu / teacher123");
-    console.log("Teacher 2: sarah.johnson@college.edu / teacher123");
-    console.log("Student: alice@student.edu / student123");
-    console.log("");
 
+    // Script successful hone ke baad process band
     process.exit();
   } catch (error) {
+    // Agar koi error aaya toh clearly dikhao
     console.error(error);
     process.exit(1);
   }
 };
 
+// Seed function run
 seedData();
